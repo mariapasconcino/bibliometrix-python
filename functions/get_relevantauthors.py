@@ -14,21 +14,48 @@ def get_relevant_authors(df, num_of_authors, frequency="N. of Documents"):
         A Plotly figure object and a DataFrame of the most relevant authors.
     """
     data = df.get()
-
+    
     # Drop rows with missing values
-    data = data.dropna(subset=["AU"])
+    #data = data.dropna(subset=["AU"])
 
     # Ensure all values in the "AU" column are lists
-    data["AU"] = data["AU"].apply(lambda x: x if isinstance(x, list) else [])
+    #data["AU"] = data["AU"].apply(lambda x: x if isinstance(x, list) else [])
+    # Ensure AU column exists and is always a list[str]
+    if "AU" not in data.columns:
+        data["AU"] = [[] for _ in range(len(data))]
+
+    def normalize_authors(value):
+        """
+        Normalize the AU column to list[str].
+        Handles lists, semicolon-delimited strings, comma-delimited strings,
+        missing values, and invalid values.
+        """
+        if isinstance(value, list):
+            return [str(author).strip() for author in value if str(author).strip()]
+
+        if pd.isna(value):
+            return []
+
+        if isinstance(value, str):
+            separator = ";" if ";" in value else ","
+            return [author.strip() for author in value.split(separator) if author.strip()]
+
+        return []
+
+    data["AU"] = data["AU"].apply(normalize_authors)
+
+    # Remove rows with no usable authors
+    data = data[data["AU"].apply(len) > 0]
 
     # Flatten the list of authors and calculate occurrences
     all_authors = [author for sublist in data["AU"] for author in sublist]
     author_counts = pd.Series(all_authors).value_counts()
 
     # Apply the selected frequency calculation
-    if frequency == "percentage":
+    #if frequency == "percentage":
+    if frequency in ["Percentage", "percentage"]:
         author_counts = (author_counts / len(data) * 100).round(1)
-    elif frequency == "freq_measure":
+    elif frequency in ["Fractionalized", "freq_measure"]:
         # Calculate fractional counts
         fractional_counts = data["AU"].apply(lambda authors: 1 / len(authors) if authors else 0)
         fractional_authors = [
