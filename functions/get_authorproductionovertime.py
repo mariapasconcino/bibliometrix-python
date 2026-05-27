@@ -1,13 +1,38 @@
 from www.services import *
 
 
+# ---------------------------------------------------------------------------
+# PATCH: normalize_au()
+# Normalizes the AU column to always be list[str].
+# AU can arrive as:
+#   - list[str]       → kept as-is
+#   - str "A; B; C"  → Scopus/PubMed semicolon-delimited → split on ";"
+#   - str "A, B, C"  → WoS comma-delimited → split on ","
+#   - NaN/None        → []
+#
+# Previously the code did:
+#   str(x).split(",")
+# which failed on Scopus semicolon strings, producing one wrong token
+# instead of correctly splitting the authors.
+# ---------------------------------------------------------------------------
+def normalize_au(x):
+    if isinstance(x, list):
+        return [str(a).strip() for a in x if str(a).strip()]
+    if not isinstance(x, str) or not x.strip():
+        return []
+    s = x.strip()
+    if ";" in s:
+        return [a.strip() for a in s.split(";") if a.strip()]
+    return [a.strip() for a in s.split(",") if a.strip()]
+
+
 def get_author_production_over_time(df, top_k_authors):
     """
-    Generates a scatter plot showing authors' production over time with point sizes representing their production, 
+    Generates a scatter plot showing authors' production over time with point sizes representing their production,
     including lines connecting points. Also calculates total citations (TC) and total citations per year (TCpY).
 
     Args:
-        df (pd.DataFrame): Dataset containing columns "AU" (authors), "PY" (year), "TI" (title), 
+        df (pd.DataFrame): Dataset containing columns "AU" (authors), "PY" (year), "TI" (title),
                            "SO" (source), "DOI" (DOI), and "TC" (total citations).
         top_k_authors (int): Number of top authors to display.
 
@@ -24,11 +49,15 @@ def get_author_production_over_time(df, top_k_authors):
     # Remove rows with invalid "PY" or "AU" values
     data = data.dropna(subset=["PY", "AU"])
 
-    # Ensure "AU" is a list and split author names
-    data["AU"] = data["AU"].apply(lambda x: x if isinstance(x, list) else str(x).split(","))
+    # PATCH: normalize AU with normalize_au() instead of str(x).split(",").
+    # The old fallback split on "," only, so Scopus strings like
+    # "Smith J.; Doe A." became one token instead of two authors.
+    # normalize_au() detects the separator (";", ",") and handles
+    # lists, plain strings, and NaN correctly.
+    data["AU"] = data["AU"].apply(normalize_au)
     data = data.explode("AU")
-    data["AU"] = data["AU"].str.strip()  # Remove leading and trailing spaces
-    data["AU"] = data["AU"].str.replace(r"\[|\]", "", regex=True)  # Remove unwanted characters
+    data["AU"] = data["AU"].str.strip()
+    data["AU"] = data["AU"].str.replace(r"\[|\]", "", regex=True)
 
     # Remove rows with missing or empty author names
     data = data.dropna(subset=["AU"])
@@ -51,7 +80,7 @@ def get_author_production_over_time(df, top_k_authors):
     # Calculate TCpY (Total Citations Per Year)
     current_year = pd.Timestamp.now().year
     author_production["TCpY"] = author_production.apply(
-        lambda row: row["TotalCitations"] if row["PY"] >= current_year 
+        lambda row: row["TotalCitations"] if row["PY"] >= current_year
         else row["TotalCitations"] / (current_year - row["PY"] + 1),
         axis=1
     )
@@ -73,8 +102,8 @@ def get_author_production_over_time(df, top_k_authors):
         size="Production",
         color="AU",
         labels={
-            "PY": "Year", 
-            "AU": "Author", 
+            "PY": "Year",
+            "AU": "Author",
             "Production": "Number of Publications",
             "TotalCitations": "Total Citations",
             "TCpY": "Citations Per Year"
@@ -92,41 +121,43 @@ def get_author_production_over_time(df, top_k_authors):
                 mode="lines",
                 line=dict(color="lightgray", width=3),
                 name=f"{author} (trend)",
-                showlegend=False  # Hide trend lines from the legend
+                showlegend=False
             )
         )
 
     # Customize layout
     fig.update_traces(marker=dict(opacity=0.7, line=dict(width=0.5, color="DarkSlateGrey")))
     fig.update_layout(
-        height=800,  # Chart height
+        height=800,
         xaxis=dict(title="Year", showgrid=True, gridcolor="lightgrey", dtick=2),
         yaxis=dict(title="Author", showgrid=True, gridcolor="lightgrey"),
         showlegend=False,
-        margin=dict(l=0, r=0, t=40, b=0),  # Margins
+        margin=dict(l=0, r=0, t=40, b=0),
     )
     fig = go.FigureWidget(fig)
     fig._config = fig._config | {'modeBarButtonsToRemove': ['pan', 'select', 'lasso2d', 'toImage'],
                                  'displaylogo': False}
 
     # Sort production table by year and author
-    table_authors_production = author_production.sort_values(by=["PY", "AU"])[["AU", "PY", "Production", "TotalCitations", "TCpY"]]
+    table_authors_production = author_production.sort_values(
+        by=["PY", "AU"]
+    )[["AU", "PY", "Production", "TotalCitations", "TCpY"]]
 
     # Create a detailed table for documents
     required_columns = ["AU", "PY", "TI", "SO", "DI", "TC"]
     missing_columns = [col for col in required_columns if col not in data.columns]
     if missing_columns:
         print(f"Warning: Missing columns in data: {missing_columns}")
-        table_documents = pd.DataFrame()  # Empty DataFrame if required columns are missing
+        table_documents = pd.DataFrame()
     else:
-        # Calculate TCpY for each document
         data["TCpY"] = data.apply(
-            lambda row: row["TC"] if row["PY"] >= current_year 
+            lambda row: row["TC"] if row["PY"] >= current_year
             else row["TC"] / (current_year - row["PY"] + 1),
             axis=1
         )
         table_documents = data[required_columns + ["TCpY"]]
-        # Filter documents to include only authors present in author_production
-        table_documents = table_documents[table_documents["AU"].isin(author_production["AU"].unique())].sort_values(by=["PY", "AU"])
+        table_documents = table_documents[
+            table_documents["AU"].isin(author_production["AU"].unique())
+        ].sort_values(by=["PY", "AU"])
 
     return fig, table_authors_production, table_documents

@@ -1,28 +1,67 @@
 from www.services import *
 
 
+# ---------------------------------------------------------------------------
+# PATCH: normalize_keyword_field()
+# Normalizes a single value from DE or ID columns to list[str].
+# DE/ID can arrive as:
+#   - list[str]              → kept as-is (post-ETL normalized format)
+#   - str "['kw1', 'kw2']"  → WoS Python-serialized list → parsed safely
+#   - str "kw1; kw2"        → Scopus/PubMed semicolon-delimited → split on ";"
+#   - str "kw1, kw2"        → comma-delimited fallback → split on ","
+#   - NaN / None            → []
+#
+# Previously the code used eval(x) which:
+#   - crashed with SyntaxError on Scopus/PubMed semicolon strings
+#   - was unsafe on arbitrary input
+#   - produced dirty tokens when applied to already-list values
+# ---------------------------------------------------------------------------
+def normalize_keyword_field(x):
+    if isinstance(x, list):
+        return [str(k).strip() for k in x if str(k).strip()]
+    if not isinstance(x, str) or not x.strip():
+        return []
+    s = x.strip()
+    # WoS Python-serialized list: starts with "[" — parse safely without eval()
+    if s.startswith("["):
+        import ast
+        try:
+            parsed = ast.literal_eval(s)
+            if isinstance(parsed, list):
+                return [str(k).strip() for k in parsed if str(k).strip()]
+        except (ValueError, SyntaxError):
+            pass
+    # Scopus/PubMed semicolon-delimited
+    if ";" in s:
+        return [k.strip() for k in s.split(";") if k.strip()]
+    # Comma-delimited fallback
+    return [k.strip() for k in s.split(",") if k.strip()]
+
+
 def get_frequent_words(df, ngram, num_of_words, word_type, file_upload_terms, file_upload_synonyms, field_separator_frequent=';'):
     """
     Generate a plot and table of the most frequent words.
-    
+
     Args:
         df: A DataFrame object containing the data.
+        ngram: N-gram size for TI/AB fields.
         num_of_words: The number of top frequent words to display.
-        word_type: The type of words to analyze (e.g., 'TI', 'AB').
+        word_type: The type of words to analyze (e.g., 'TI', 'AB', 'DE', 'ID').
         field_separator_frequent: The separator used in the field.
         file_upload_terms: File containing terms to remove.
         file_upload_synonyms: File containing synonyms.
-        
+
     Returns:
         A Plotly figure object and a DataFrame of the most frequent words.
     """
 
-    # Load stopwords and synonyms
+    # Load stopwords
     remove_terms = None
     if file_upload_terms:
         with open(file_upload_terms[0]['datapath'], 'r', encoding='utf-8') as file:
             remove_terms = [line.strip() for line in file]
 
+    # Load synonyms
     synonyms = None
     if file_upload_synonyms:
         with open(file_upload_synonyms[0]['datapath'], 'r', encoding='utf-8') as file:
@@ -96,38 +135,60 @@ def get_frequent_words(df, ngram, num_of_words, word_type, file_upload_terms, fi
 
     return fig, table
 
+
 def table_tag(df, tag, ngrams=1, remove_terms=None, synonyms=None):
     """
     Extract and count words from a specified field in the DataFrame.
     """
     M = df.get()
-    
-    # Remove duplicates
-    M = M.drop_duplicates(subset='SR')
-    
+
+    # PATCH: guard drop_duplicates on SR.
+    # Previously: M.drop_duplicates(subset='SR') crashed with KeyError
+    # when SR was absent (non-WoS sources without full ETL).
+    # Now: dedup on SR only if it exists; fall back to DI (DOI) if available;
+    # otherwise skip deduplication rather than crash.
+    if "SR" in M.columns:
+        M = M.drop_duplicates(subset="SR")
+    elif "DI" in M.columns:
+        M = M.drop_duplicates(subset="DI")
+    # else: no deduplication — better than a crash
+
     # Get text data based on tag
     if tag in ['AB', 'TI']:
-        text_data = term_extraction(df, field=tag, stemming=False, verbose=False, 
-                                  ngrams=ngrams, remove_terms=remove_terms, synonyms=synonyms)
+        text_data = term_extraction(df, field=tag, stemming=False, verbose=False,
+                                    ngrams=ngrams, remove_terms=remove_terms, synonyms=synonyms)
         text_data = text_data.get()
         text_data = text_data[f"{tag}_TM"]
+
     else:
+        # PATCH: guard against missing column.
+        # Previously M[tag] crashed with KeyError when tag="ID" (WoS-exclusive
+        # Keywords Plus) and the column was absent in non-WoS sources.
+        if tag not in M.columns:
+            return {}  # return empty counts — caller gets empty chart, not crash
         text_data = M[tag]
 
-    # Handle list columns (DE and ID)
+    # PATCH: normalize DE/ID using normalize_keyword_field() instead of eval().
+    # Previously: eval(x) assumed WoS Python-serialized list format.
+    # Scopus uses "kw1; kw2" → eval() raised SyntaxError.
+    # PubMed uses "kw1, kw2" → eval() produced wrong tokens.
+    # normalize_keyword_field() handles all formats safely.
     if tag in ['DE', 'ID']:
-        text_data = text_data.dropna().apply(lambda x: ', '.join(eval(x) if isinstance(x, str) else x))
+        text_data = text_data.apply(normalize_keyword_field)
+        # Drop rows that produced empty lists
+        text_data = text_data[text_data.apply(len) > 0]
 
     # Process words
     if tag in ['DE', 'ID']:
-        words = text_data.dropna().astype(str).str.cat(sep=', ').upper()
-        words = [word.strip() for word in words.split(',') if word and word.strip()]
+        # Each row is now a clean list[str] — flatten directly
+        words = [
+            word.strip().upper()
+            for kw_list in text_data
+            for word in kw_list
+            if word.strip()
+        ]
     else:
         words = [item for sublist in text_data for item in sublist]
-
-    # Apply n-grams if needed
-    # if ngrams > 1 and tag not in ['DE', 'ID']:
-    #     words = [' '.join(words[i:i+ngrams]) for i in range(len(words)-ngrams+1)]
 
     # Replace synonyms
     if synonyms:
@@ -139,7 +200,11 @@ def table_tag(df, tag, ngrams=1, remove_terms=None, synonyms=None):
 
     # Remove specified terms
     if remove_terms and tag in ['DE', 'ID']:
-        word_counts = {word: count for word, count in word_counts.items() 
-                      if word.upper() not in [term.upper() for term in remove_terms]}
+        remove_upper = {term.upper() for term in remove_terms}
+        word_counts = {
+            word: count
+            for word, count in word_counts.items()
+            if word.upper() not in remove_upper
+        }
 
     return word_counts
