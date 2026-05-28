@@ -2,7 +2,10 @@ import pandas as pd
 
 from www.services.metatagextraction import metaTagExtraction
 
-# Creo un dataframe finto
+# =========================
+# TEST DATAFRAME
+# =========================
+
 data = pd.DataFrame({
     "AU": [["Smith J", "Doe A"]],
     "SO": ["JOURNAL OF TEST"],
@@ -14,7 +17,10 @@ data = pd.DataFrame({
     "CR": [["Smith, 2020, SCIENCE"]]
 })
 
+# =========================
 # TEST SR
+# =========================
+
 try:
     result = metaTagExtraction(data, Field="SR")
     print("✅ SR OK")
@@ -24,7 +30,10 @@ except Exception as e:
     print("❌ SR ERROR")
     print(e)
 
+# =========================
 # TEST AU_CO
+# =========================
+
 try:
     result = metaTagExtraction(data, Field="AU_CO")
     print("✅ AU_CO OK")
@@ -34,7 +43,10 @@ except Exception as e:
     print("❌ AU_CO ERROR")
     print(e)
 
+# =========================
 # TEST CR_SO
+# =========================
+
 try:
     result = metaTagExtraction(data, Field="CR_SO")
     print("✅ CR_SO OK")
