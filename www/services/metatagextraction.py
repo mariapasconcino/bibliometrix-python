@@ -1,12 +1,4 @@
-from .utils import *
-
-
-def metaTagExtraction(df, Field="AU_CO", sep=";", aff_disamb=False):
-    """
-    Extract metadata tags from a DataFrame based on the specified field.
-    
-    Args:
-        df: A DataFrame object containing the data.
+ning the data.
         Field: The field to extract metadata tags from.
         sep: The separator used to split the metadata tags.
         aff_disamb: A boolean value indicating whether to disambiguate the affiliations.
@@ -27,7 +19,15 @@ def metaTagExtraction(df, Field="AU_CO", sep=";", aff_disamb=False):
         M = CR_SO(M)
 
     if Field == "AU_CO":
-        M = AU_CO(M)
+        M = AU_CO(from .utils import *
+
+
+def metaTagExtraction(df, Field="AU_CO", sep=";", aff_disamb=False):
+    """
+    Extract metadata tags from a DataFrame based on the specified field.
+    
+    Args:
+        df: A DataFrame object contaiM)
 
     if Field == "AU1_CO":
         M = AU1_CO(M)

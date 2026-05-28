@@ -55,6 +55,7 @@ def get_relevant_authors(df, num_of_authors, frequency="N. of Documents"):
     #if frequency == "percentage":
     if frequency in ["Percentage", "percentage"]:
         author_counts = (author_counts / len(data) * 100).round(1)
+    #elif frequency == "freq_measure":
     elif frequency in ["Fractionalized", "freq_measure"]:
         # Calculate fractional counts
         fractional_counts = data["AU"].apply(lambda authors: 1 / len(authors) if authors else 0)

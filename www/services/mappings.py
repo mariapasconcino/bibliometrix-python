@@ -48,6 +48,7 @@ OPENALEX_MAPPING = {
     "id":               "UT",
     "doi":              "DI",
     "title":            "TI",
+    "display_name":     "TI",
     "publication_year": "PY",
     "language":         "LA",
     "cited_by_count":   "TC",
